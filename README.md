@@ -1,5 +1,7 @@
 # Linear MCP Server
 
+IMPORTANT NOTE: This MCP Server is now deprecated and is no longer being maintained. I recommend you use the official Linear remote MCP server here: https://linear.app/changelog/2025-05-01-mcp (https://mcp.linear.app/sse)
+
 [![npm version](https://img.shields.io/npm/v/linear-mcp-server.svg)](https://www.npmjs.com/package/linear-mcp-server) [![smithery badge](https://smithery.ai/badge/linear-mcp-server)](https://smithery.ai/server/linear-mcp-server)
 
 A [Model Context Protocol](https://github.com/modelcontextprotocol) server for the [Linear API](https://developers.linear.app/docs/graphql/working-with-the-graphql-api).
