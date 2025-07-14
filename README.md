@@ -138,6 +138,48 @@ For development with auto-rebuild:
 npm run watch
 ```
 
+## TODO
+
+Missing tools that would be valuable to implement:
+
+### Projects Management
+- `linear_get_projects` - List all projects
+- `linear_create_project` - Create new project  
+- `linear_update_project` - Update project details
+- `linear_get_project_issues` - Get issues in a specific project
+
+### Labels/Tags Management
+- `linear_get_labels` - List all available labels
+- `linear_create_label` - Create new label
+- `linear_add_issue_label` - Add label to issue
+- `linear_remove_issue_label` - Remove label from issue
+
+### Workflow States
+- `linear_get_workflow_states` - List all workflow states (status options)
+- `linear_get_team_workflow_states` - Get states for specific team
+
+### Cycles Management
+- `linear_get_cycles` - List cycles (sprints)
+- `linear_create_cycle` - Create new cycle
+- `linear_get_cycle_issues` - Get issues in a cycle
+
+### Attachments/Files
+- `linear_upload_file` - Upload file and get URL
+- `linear_add_issue_attachment` - Attach file to issue
+
+### Advanced Issue Operations
+- `linear_archive_issue` - Archive an issue
+- `linear_unarchive_issue` - Unarchive an issue
+- `linear_duplicate_issue` - Duplicate an issue
+
+### Team Management
+- `linear_get_teams` - List all teams (available via resources but not as tool)
+- `linear_get_team_members` - Get members of a team
+
+### Estimates and Time Tracking
+- `linear_set_issue_estimate` - Set story points/estimate
+- `linear_get_team_estimates` - Get estimate scale for team
+
 ## License
 
 This MCP server is licensed under the MIT License. This means you are free to use, modify, and distribute the software, subject to the terms and conditions of the MIT License. For more details, please see the LICENSE file in the project repository.
