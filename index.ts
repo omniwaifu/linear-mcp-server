@@ -1004,85 +1004,11 @@ async function main() {
     );
 
     server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-      resources: await linearClient.listIssues(),
+      resources: [],
     }));
 
-    server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      const uriString = request.params.uri;
-
-      if (uriString === "linear-organization:") {
-        const organization = await linearClient.getOrganization();
-        return {
-          contents: [
-            {
-              uri: "linear-organization:",
-              mimeType: "application/json",
-              text: JSON.stringify(organization, null, 2),
-            },
-          ],
-        };
-      }
-
-      if (uriString === "linear-viewer:") {
-        const viewer = await linearClient.getViewer();
-        return {
-          contents: [
-            {
-              uri: "linear-viewer:",
-              mimeType: "application/json",
-              text: JSON.stringify(viewer, null, 2),
-            },
-          ],
-        };
-      }
-
-      const uri = new URL(request.params.uri);
-      const path = uri.pathname.replace(/^\//, "");
-
-      if (uri.protocol === "linear-issue:") {
-        const issue = await linearClient.getIssue(path);
-        return {
-          contents: [
-            {
-              uri: request.params.uri,
-              mimeType: "application/json",
-              text: JSON.stringify(issue, null, 2),
-            },
-          ],
-        };
-      }
-
-      if (uri.protocol === "linear-team:") {
-        const [teamId] = path.split("/");
-        const issues = await linearClient.getTeamIssues(teamId);
-        return {
-          contents: [
-            {
-              uri: request.params.uri,
-              mimeType: "application/json",
-              text: JSON.stringify(issues, null, 2),
-            },
-          ],
-        };
-      }
-
-      if (uri.protocol === "linear-user:") {
-        const [userId] = path.split("/");
-        const issues = await linearClient.getUserIssues({
-          userId: userId === "me" ? undefined : userId,
-        });
-        return {
-          contents: [
-            {
-              uri: request.params.uri,
-              mimeType: "application/json",
-              text: JSON.stringify(issues, null, 2),
-            },
-          ],
-        };
-      }
-
-      throw new Error(`Unsupported resource URI: ${request.params.uri}`);
+    server.setRequestHandler(ReadResourceRequestSchema, async () => {
+      throw new Error("Resource reading is disabled to prevent API rate limiting. Use the tools instead.");
     });
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
