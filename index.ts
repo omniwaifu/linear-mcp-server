@@ -79,8 +79,6 @@ interface LinearIssueResponse {
 
 class RateLimiter {
   public readonly requestsPerHour = 1400;
-  private queue: (() => Promise<any>)[] = [];
-  private processing = false;
   private lastRequestTime = 0;
   private readonly minDelayMs = 3600000 / this.requestsPerHour;
   private requestTimes: number[] = [];
@@ -88,52 +86,25 @@ class RateLimiter {
 
   async enqueue<T>(fn: () => Promise<T>, operation?: string): Promise<T> {
     const startTime = Date.now();
-    const queuePosition = this.queue.length;
+    const timeSinceLastRequest = startTime - this.lastRequestTime;
 
-    console.error(`[Linear API] Enqueueing request${operation ? ` for ${operation}` : ''} (Queue position: ${queuePosition})`);
-
-    return new Promise((resolve, reject) => {
-      this.queue.push(async () => {
-        try {
-          console.error(`[Linear API] Starting request${operation ? ` for ${operation}` : ''}`);
-          const result = await fn();
-          const endTime = Date.now();
-          const duration = endTime - startTime;
-
-          console.error(`[Linear API] Completed request${operation ? ` for ${operation}` : ''} (Duration: ${duration}ms)`);
-          this.trackRequest(startTime, endTime, operation);
-          resolve(result);
-        } catch (error) {
-          console.error(`[Linear API] Error in request${operation ? ` for ${operation}` : ''}: `, error);
-          reject(error);
-        }
-      });
-      this.processQueue();
-    });
-  }
-
-  private async processQueue() {
-    if (this.processing || this.queue.length === 0) return;
-    this.processing = true;
-
-    while (this.queue.length > 0) {
-      const now = Date.now();
-      const timeSinceLastRequest = now - this.lastRequestTime;
-
-      const requestsInLastHour = this.requestTimestamps.filter(t => t > now - 3600000).length;
-      if (requestsInLastHour >= this.requestsPerHour * 0.9 && timeSinceLastRequest < this.minDelayMs) {
-        const waitTime = this.minDelayMs - timeSinceLastRequest;
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
-
-      const fn = this.queue.shift();
-      if (fn) {
-        this.lastRequestTime = Date.now();
-        await fn();
-      }
+    if (timeSinceLastRequest < this.minDelayMs) {
+      const waitTime = this.minDelayMs - timeSinceLastRequest;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
 
-    this.processing = false;
+    try {
+      this.lastRequestTime = Date.now();
+      const result = await fn();
+      const endTime = Date.now();
+      const duration = endTime - startTime;
+
+      this.trackRequest(startTime, endTime, operation);
+      return result;
+    } catch (error) {
+      console.error(`[Linear API] Error in request${operation ? ` for ${operation}` : ''}: `, error);
+      throw error;
+    }
   }
 
   async batch<T>(items: any[], batchSize: number, fn: (item: any) => Promise<T>, operation?: string): Promise<T[]> {
@@ -171,7 +142,7 @@ class RateLimiter {
       averageRequestTime: this.requestTimes.length > 0
         ? this.requestTimes.reduce((a, b) => a + b, 0) / this.requestTimes.length
         : 0,
-      queueLength: this.queue.length,
+      queueLength: 0,
       lastRequestTime: this.lastRequestTime
     };
   }
@@ -188,16 +159,10 @@ class LinearMCPClient {
   }
 
   private async getIssueDetails(issue: Issue) {
-    const [statePromise, assigneePromise, teamPromise] = [
-      issue.state,
-      issue.assignee,
-      issue.team
-    ];
-
     const [state, assignee, team] = await Promise.all([
-      this.rateLimiter.enqueue(async () => statePromise ? await statePromise : null),
-      this.rateLimiter.enqueue(async () => assigneePromise ? await assigneePromise : null),
-      this.rateLimiter.enqueue(async () => teamPromise ? await teamPromise : null)
+      this.rateLimiter.enqueue(() => issue.state ? issue.state : Promise.resolve(null)),
+      this.rateLimiter.enqueue(() => issue.assignee ? issue.assignee : Promise.resolve(null)), 
+      this.rateLimiter.enqueue(() => issue.team ? issue.team : Promise.resolve(null))
     ]);
 
     return {
@@ -217,7 +182,7 @@ class LinearMCPClient {
           requestsInLastHour: metrics.requestsInLastHour,
           remainingRequests: this.rateLimiter.requestsPerHour - metrics.requestsInLastHour,
           averageRequestTime: `${Math.round(metrics.averageRequestTime)}ms`,
-          queueLength: metrics.queueLength,
+          queueLength: 0,
           lastRequestTime: new Date(metrics.lastRequestTime).toISOString()
         }
       }
@@ -246,9 +211,9 @@ class LinearMCPClient {
           metadata: {
             identifier: issue.identifier,
             priority: issue.priority,
-            status: details.state ? await details.state.name : undefined,
-            assignee: details.assignee ? await details.assignee.name : undefined,
-            team: details.team ? await details.team.name : undefined,
+            status: details.state?.name,
+            assignee: details.assignee?.name,
+            team: details.team?.name,
           }
         };
       },
@@ -405,12 +370,9 @@ class LinearMCPClient {
     const { nodes: issues } = await this.rateLimiter.enqueue(() => team.issues());
 
     const issuesWithDetails = await this.rateLimiter.batch(issues, 5, async (issue) => {
-      const statePromise = issue.state;
-      const assigneePromise = issue.assignee;
-
       const [state, assignee] = await Promise.all([
-        this.rateLimiter.enqueue(async () => statePromise ? await statePromise : null),
-        this.rateLimiter.enqueue(async () => assigneePromise ? await assigneePromise : null)
+        this.rateLimiter.enqueue(() => issue.state ? issue.state : Promise.resolve(null)),
+        this.rateLimiter.enqueue(() => issue.assignee ? issue.assignee : Promise.resolve(null))
       ]);
 
       return {
@@ -419,8 +381,8 @@ class LinearMCPClient {
         title: issue.title,
         description: issue.description,
         priority: issue.priority,
-        status: state?.name,
-        assignee: assignee?.name,
+        status: state ? (state as any)?.name : null,
+        assignee: assignee ? (assignee as any)?.name : null,
         url: issue.url
       };
     });
@@ -590,11 +552,11 @@ const searchIssuesTool: Tool = {
 
 const getUserIssuesTool: Tool = {
   name: "linear_get_user_issues",
-  description: "Retrieves issues assigned to a specific user or the authenticated user if no userId is provided. Returns issues sorted by last updated, including priority, status, and other metadata. Useful for finding a user's workload or tracking assigned tasks.",
+  description: "Retrieves issues assigned to a user. IMPORTANT: For 'my issues' queries, DO NOT provide userId (gets authenticated user automatically). For other users, first fetch organization data to find their user ID by name, then provide userId parameter. Returns issues sorted by last updated.",
   inputSchema: {
     type: "object",
     properties: {
-      userId: { type: "string", description: "Optional user ID. If not provided, returns authenticated user's issues" },
+      userId: { type: "string", description: "User ID - ONLY provide this for other users, NOT for the requesting user's own issues. Omit for 'my issues' queries." },
       includeArchived: { type: "boolean", description: "Include archived issues in results" },
       limit: { type: "number", description: "Maximum number of issues to return (default: 50)" }
     }
@@ -692,6 +654,21 @@ Key capabilities:
 - Issue tracking: Add comments and track progress through status updates and assignments.
 - Organization overview: View team structures and user assignments across the organization.
 
+User Identification Workflow:
+When users ask about issues for themselves or others:
+1. Self-queries ("my issues", "issues assigned to me", "what's on my plate"):
+   - Use linear_get_user_issues WITHOUT userId parameter: {}
+   - This automatically gets the authenticated user's issues
+2. Other user queries ("justin's issues", "what is sarah working on"):
+   - First fetch linear-organization: resource to get the user list
+   - Find the user ID by matching the name provided (e.g., name: "Justin" → id: "user-abc123")
+   - Then use linear_get_user_issues WITH the userId parameter: {"userId": "user-abc123"}
+3. Always prioritize organization data lookup for accurate user identification
+
+Examples:
+- User asks: "What are my issues?" → linear_get_user_issues({})
+- User asks: "What is Justin working on?" → First get organization data, find Justin's ID, then linear_get_user_issues({"userId": "found-user-id"})
+
 Tool Usage:
 - linear_create_issue:
   - use teamId from linear-organization: resource
@@ -710,7 +687,9 @@ Tool Usage:
   - returns max 10 results by default
 
 - linear_get_user_issues:
-  - omit userId to get authenticated user's issues
+  - omit userId to get authenticated user's issues (recommended for "my issues" queries)
+  - when user asks about their own issues, always omit userId parameter
+  - when user asks about someone else's issues by name, first fetch organization data to find the user ID
   - useful for workload analysis and sprint planning
   - returns most recently updated issues first
 
@@ -736,9 +715,11 @@ Best practices:
   - Include action items or next steps when appropriate
 
 - General best practices:
-  - Fetch organization data first to get valid team IDs
+  - Fetch organization data first to get valid team IDs and user information
   - Use search_issues to find issues for bulk operations
   - Include markdown formatting in descriptions and comments
+  - For user identification: always check linear-organization: resource first to map names to user IDs
+  - When users ask about "my issues" or "issues assigned to me", use linear_get_user_issues without userId parameter
 
 Resource patterns:
 - linear-issue:///{issueId} - Single issue details (e.g., linear-issue:///c2b318fb-95d2-4a81-9539-f3268f34af87)
@@ -948,7 +929,7 @@ async function main() {
             requestsInLastHour: metrics.requestsInLastHour,
             remainingRequests: linearClient.rateLimiter.requestsPerHour - metrics.requestsInLastHour,
             averageRequestTime: `${Math.round(metrics.averageRequestTime)}ms`,
-            queueLength: metrics.queueLength
+            queueLength: 0
           }
         };
 
@@ -1034,7 +1015,7 @@ async function main() {
             requestsInLastHour: metrics.requestsInLastHour,
             remainingRequests: linearClient.rateLimiter.requestsPerHour - metrics.requestsInLastHour,
             averageRequestTime: `${Math.round(metrics.averageRequestTime)}ms`,
-            queueLength: metrics.queueLength
+            queueLength: 0
           }
         };
 
