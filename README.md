@@ -1,6 +1,5 @@
 # Linear MCP Server
 
-[![npm version](https://img.shields.io/npm/v/linear-mcp-server.svg)](https://www.npmjs.com/package/linear-mcp-server) [![smithery badge](https://smithery.ai/badge/linear-mcp-server)](https://smithery.ai/server/linear-mcp-server)
 
 ~~**IMPORTANT NOTE:** This MCP Server is now deprecated and is no longer being maintained. I recommend you use the official Linear remote MCP server here: https://linear.app/changelog/2025-05-01-mcp (https://mcp.linear.app/sse)~~
 
@@ -12,29 +11,28 @@ This server provides integration with Linear's issue tracking system through MCP
 
 ## Installation
 
-### Automatic Installation
-
-To install the Linear MCP server for Claude Desktop automatically via [Smithery](https://smithery.ai/protocol/linear-mcp-server):
-
+1. Clone and build the server:
 ```bash
-npx @smithery/cli install linear-mcp-server --client claude
+git clone <repository-url>
+cd linear-mcp-server
+npm install
+npm run build
 ```
 
-### Manual Installation
+2. Create or get a Linear API key for your team: [https://linear.app/YOUR-TEAM/settings/api](https://linear.app/YOUR-TEAM/settings/api)
 
-1. Create or get a Linear API key for your team: [https://linear.app/YOUR-TEAM/settings/api](https://linear.app/YOUR-TEAM/settings/api)
-
-2. Add server config to Claude Desktop:
+3. Add server config to Claude Desktop:
    - MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+   - Linux: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "linear": {
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "linear-mcp-server"
+        "/path/to/linear-mcp-server/build/index.js"
       ],
       "env": {
         "LINEAR_API_KEY": "your_linear_api_key_here"
@@ -43,6 +41,8 @@ npx @smithery/cli install linear-mcp-server --client claude
   }
 }
 ```
+
+Replace `/path/to/linear-mcp-server` with the actual path to your cloned repository.
 
 ## Components
 
