@@ -10,14 +10,14 @@
     "build"
   ],
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
-    "prepare": "npm run build",
-    "watch": "tsc --watch",
-    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
-    "lint": "eslint index.ts",
-    "lint:fix": "eslint index.ts --fix",
-    "format": "prettier --write index.ts",
-    "type-check": "tsc --noEmit"
+    "build": "bun run tsc && bun -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "prepare": "bun run build",
+    "watch": "bun run tsc --watch",
+    "inspector": "bunx @modelcontextprotocol/inspector build/index.js",
+    "lint": "bunx eslint index.ts",
+    "lint:fix": "bunx eslint index.ts --fix",
+    "format": "bunx prettier --write index.ts",
+    "type-check": "bun run tsc --noEmit"
   },
   "dependencies": {
     "@linear/sdk": "^33.0.0",
