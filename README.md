@@ -15,8 +15,8 @@ This server provides integration with Linear's issue tracking system through MCP
 ```bash
 git clone <repository-url>
 cd linear-mcp-server
-npm install
-npm run build
+bun install
+bun run build
 ```
 
 2. Create or get a Linear API key for your team: [https://linear.app/YOUR-TEAM/settings/api](https://linear.app/YOUR-TEAM/settings/api)
@@ -117,7 +117,7 @@ Some example prompts you can use with Claude Desktop to interact with Linear:
 1. Install dependencies:
 
 ```bash
-npm install
+bun install
 ```
 
 1. Configure Linear API key in `.env`:
@@ -129,13 +129,13 @@ LINEAR_API_KEY=your_api_key_here
 1. Build the server:
 
 ```bash
-npm run build
+bun run build
 ```
 
 For development with auto-rebuild:
 
 ```bash
-npm run watch
+bun run watch
 ```
 
 ## TODO
