@@ -102,7 +102,16 @@ class RateLimiter {
 
     try {
       this.lastRequestTime = Date.now();
-      const result = await fn();
+      
+      // Add timeout wrapper to prevent hanging
+      const timeoutMs = 30000; // 30 second timeout
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Request timeout after ${timeoutMs}ms${operation ? ` for ${operation}` : ""}`));
+        }, timeoutMs);
+      });
+      
+      const result = await Promise.race([fn(), timeoutPromise]);
       const endTime = Date.now();
 
       this.trackRequest(startTime, endTime, operation);
@@ -318,42 +327,73 @@ class LinearMCPClient {
   }
 
   async searchIssues(args: SearchIssuesArgs) {
-    const result = await this.rateLimiter.enqueue(() =>
-      this.client.issues({
-        filter: this.buildSearchFilter(args),
-        first: args.limit || 10,
-        includeArchived: args.includeArchived,
-      }),
-    );
+    try {
+      const result = await this.rateLimiter.enqueue(() =>
+        this.client.issues({
+          filter: this.buildSearchFilter(args),
+          first: Math.min(args.limit || 10, 25), // Cap at 25 to avoid timeouts
+          includeArchived: args.includeArchived,
+        }),
+      );
 
-    const issuesWithDetails = await this.rateLimiter.batch(
-      result.nodes,
-      5,
-      async (issue) => {
-        const [state, assignee, labels] = await Promise.all([
-          this.rateLimiter.enqueue(() => issue.state) as Promise<WorkflowState>,
-          this.rateLimiter.enqueue(() => issue.assignee) as Promise<User>,
-          this.rateLimiter.enqueue(() => issue.labels()) as Promise<{
-            nodes: IssueLabel[];
-          }>,
-        ]);
+      if (!result?.nodes || result.nodes.length === 0) {
+        return this.addMetricsToResponse([]);
+      }
 
-        return {
-          id: issue.id,
-          identifier: issue.identifier,
-          title: issue.title,
-          description: issue.description,
-          priority: issue.priority,
-          estimate: issue.estimate,
-          status: state?.name || null,
-          assignee: assignee?.name || null,
-          labels: labels?.nodes?.map((label: IssueLabel) => label.name) || [],
-          url: issue.url,
-        };
-      },
-    );
+      const issuesWithDetails = await this.rateLimiter.batch(
+        result.nodes,
+        3, // Smaller batch size for reliability
+        async (issue) => {
+          try {
+            const [state, assignee, labels] = await Promise.all([
+              this.rateLimiter.enqueue(() => issue.state) as Promise<WorkflowState>,
+              this.rateLimiter.enqueue(() => issue.assignee) as Promise<User>,
+              this.rateLimiter.enqueue(() => issue.labels()) as Promise<{
+                nodes: IssueLabel[];
+              }>,
+            ]);
 
-    return this.addMetricsToResponse(issuesWithDetails);
+            return {
+              id: issue.id,
+              identifier: issue.identifier,
+              title: issue.title,
+              description: issue.description,
+              priority: issue.priority,
+              estimate: issue.estimate,
+              status: state?.name || null,
+              assignee: assignee?.name || null,
+              labels: labels?.nodes?.map((label: IssueLabel) => label.name) || [],
+              url: issue.url,
+            };
+          } catch (error) {
+            // Return basic issue info if detailed fetch fails
+            console.error(`Failed to get details for issue ${issue.identifier}:`, error instanceof Error ? error.message : String(error));
+            return {
+              id: issue.id,
+              identifier: issue.identifier,
+              title: issue.title,
+              description: issue.description,
+              priority: issue.priority,
+              estimate: issue.estimate,
+              status: "Unknown",
+              assignee: null,
+              labels: [],
+              url: issue.url,
+            };
+          }
+        },
+      );
+
+      return this.addMetricsToResponse(issuesWithDetails);
+    } catch (error) {
+      console.error(`Error in searchIssues: ${error}`);
+      // Return structured error instead of throwing
+      return this.addMetricsToResponse({
+        error: true,
+        message: error instanceof Error ? error.message : "Failed to search issues",
+        issues: []
+      });
+    }
   }
 
   async getUserIssues(args: GetUserIssuesArgs) {
@@ -372,26 +412,43 @@ class LinearMCPClient {
         }),
       );
 
-      if (!result?.nodes) {
+      if (!result?.nodes || result.nodes.length === 0) {
         return this.addMetricsToResponse([]);
       }
 
+      // Limit processing to avoid timeouts
+      const limitedNodes = result.nodes.slice(0, Math.min(result.nodes.length, 20));
+      
       const issuesWithDetails = await this.rateLimiter.batch(
-        result.nodes,
-        5,
+        limitedNodes,
+        3, // Smaller batch size for reliability
         async (issue) => {
-          const state = (await this.rateLimiter.enqueue(
-            () => issue.state,
-          )) as WorkflowState;
-          return {
-            id: issue.id,
-            identifier: issue.identifier,
-            title: issue.title,
-            description: issue.description,
-            priority: issue.priority,
-            stateName: state?.name || "Unknown",
-            url: issue.url,
-          };
+          try {
+            const state = (await this.rateLimiter.enqueue(
+              () => issue.state,
+            )) as WorkflowState;
+            return {
+              id: issue.id,
+              identifier: issue.identifier,
+              title: issue.title,
+              description: issue.description,
+              priority: issue.priority,
+              stateName: state?.name || "Unknown",
+              url: issue.url,
+            };
+          } catch (error) {
+            // Return basic issue info if state fetch fails
+            console.error(`Failed to get state for issue ${issue.identifier}:`, error instanceof Error ? error.message : String(error));
+            return {
+              id: issue.id,
+              identifier: issue.identifier,
+              title: issue.title,
+              description: issue.description,
+              priority: issue.priority,
+              stateName: "Unknown",
+              url: issue.url,
+            };
+          }
         },
         "getUserIssues",
       );
@@ -399,7 +456,12 @@ class LinearMCPClient {
       return this.addMetricsToResponse(issuesWithDetails);
     } catch (error) {
       console.error(`Error in getUserIssues: ${error}`);
-      throw error;
+      // Return structured error instead of throwing
+      return this.addMetricsToResponse({
+        error: true,
+        message: error instanceof Error ? error.message : "Failed to fetch user issues",
+        issues: []
+      });
     }
   }
 
@@ -1065,7 +1127,15 @@ async function main() {
           lastRequestTime: Date.now(),
         };
 
-        try {
+        // Add global timeout wrapper for all tool calls
+        const toolTimeout = 45000; // 45 second global timeout
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`Tool call timeout after ${toolTimeout}ms for ${request.params.name}`));
+          }, toolTimeout);
+        });
+
+        const executeToolCall = async () => {
           const { name, arguments: args } = request.params;
           if (!args) throw new Error("Missing arguments");
 
@@ -1176,6 +1246,10 @@ async function main() {
             default:
               throw new Error(`Unknown tool: ${name}`);
           }
+        };
+
+        try {
+          return await Promise.race([executeToolCall(), timeoutPromise]);
         } catch (error) {
           console.error("Error executing tool:", error);
 
