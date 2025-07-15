@@ -108,6 +108,7 @@ interface RateLimiterMetrics {
 }
 
 interface LinearIssueResponse {
+  id: string;
   identifier: string;
   title: string;
   priority: number | null;
@@ -1558,7 +1559,7 @@ async function main() {
                     text: `Found ${issues.length} issues:\n${issues
                       .map(
                         (issue: LinearIssueResponse) =>
-                          `- ${issue.identifier}: ${issue.title}\n  Priority: ${issue.priority || "None"}\n  Status: ${issue.status || "None"}\n  ${issue.url}`,
+                          `- ${issue.identifier}: ${issue.title}\n  ID: ${issue.id}\n  Priority: ${issue.priority || "None"}\n  Status: ${issue.status || "None"}\n  ${issue.url}`,
                       )
                       .join("\n")}`,
                     metadata: baseResponse,
