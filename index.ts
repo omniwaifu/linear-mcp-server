@@ -758,6 +758,7 @@ class LinearMCPClient {
       filter.or = [
         { title: { contains: args.query } },
         { description: { contains: args.query } },
+        { identifier: { contains: args.query } },
       ];
     }
 
