@@ -1779,13 +1779,7 @@ async function main() {
               content: [
                 {
                   type: "text",
-                  text: {
-                    error: {
-                      type: "VALIDATION_ERROR",
-                      message: "Invalid request parameters",
-                      details: formattedErrors,
-                    },
-                  },
+                  text: `VALIDATION_ERROR: Invalid request parameters\n${formattedErrors.map(err => `- ${err.path.join('.')}: ${err.message}`).join('\n')}`,
                   metadata: {
                     error: true,
                     ...errorResponse,
@@ -1801,18 +1795,7 @@ async function main() {
               content: [
                 {
                   type: "text",
-                  text: {
-                    error: {
-                      type: "API_ERROR",
-                      message: error.message,
-                      details: {
-                        // @ts-ignore - response property exists but isn't in type
-                        status: error.response?.status,
-                        // @ts-ignore - response property exists but isn't in type
-                        data: error.response?.data,
-                      },
-                    },
-                  },
+                  text: `API_ERROR: ${error.message}\nStatus: ${(error as any).response?.status || 'unknown'}`,
                   metadata: {
                     error: true,
                     ...errorResponse,
@@ -1827,13 +1810,7 @@ async function main() {
             content: [
               {
                 type: "text",
-                text: {
-                  error: {
-                    type: "UNKNOWN_ERROR",
-                    message:
-                      error instanceof Error ? error.message : String(error),
-                  },
-                },
+                text: `UNKNOWN_ERROR: ${error instanceof Error ? error.message : String(error)}`,
                 metadata: {
                   error: true,
                   ...errorResponse,
