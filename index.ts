@@ -32,6 +32,16 @@ interface CreateIssueArgs {
   description?: string;
   priority?: number;
   status?: string;
+  parentId?: string;
+  assigneeId?: string;
+  labels?: string[];
+  estimate?: number;
+  dueDate?: string;
+  projectId?: string;
+  cycleId?: string;
+  subIssueSortOrder?: number;
+  createAsUser?: string;
+  displayIconUrl?: string;
 }
 
 interface UpdateIssueArgs {
@@ -40,6 +50,12 @@ interface UpdateIssueArgs {
   description?: string;
   priority?: number;
   status?: string;
+  assigneeId?: string;
+  labels?: string[];
+  estimate?: number;
+  dueDate?: string;
+  projectId?: string;
+  cycleId?: string;
 }
 
 interface SearchIssuesArgs {
@@ -65,6 +81,22 @@ interface AddCommentArgs {
   body: string;
   createAsUser?: string;
   displayIconUrl?: string;
+}
+
+interface CreateAttachmentArgs {
+  issueId: string;
+  title: string;
+  subtitle?: string;
+  url: string;
+  iconUrl?: string;
+  metadata?: Record<string, any>;
+}
+
+interface UpdateAttachmentArgs {
+  id: string;
+  title?: string;
+  subtitle?: string;
+  metadata?: Record<string, any>;
 }
 
 interface RateLimiterMetrics {
@@ -102,15 +134,19 @@ class RateLimiter {
 
     try {
       this.lastRequestTime = Date.now();
-      
+
       // Add timeout wrapper to prevent hanging
       const timeoutMs = 30000; // 30 second timeout
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
-          reject(new Error(`Request timeout after ${timeoutMs}ms${operation ? ` for ${operation}` : ""}`));
+          reject(
+            new Error(
+              `Request timeout after ${timeoutMs}ms${operation ? ` for ${operation}` : ""}`,
+            ),
+          );
         }, timeoutMs);
       });
-      
+
       const result = await Promise.race([fn(), timeoutPromise]);
       const endTime = Date.now();
 
@@ -145,7 +181,11 @@ class RateLimiter {
     return results.flat();
   }
 
-  private trackRequest(startTime: number, endTime: number, _operation?: string) {
+  private trackRequest(
+    startTime: number,
+    endTime: number,
+    _operation?: string,
+  ) {
     const duration = endTime - startTime;
     this.requestTimes.push(duration);
     this.requestTimestamps.push(startTime);
@@ -222,10 +262,10 @@ class LinearMCPClient {
     // Handle arrays differently to preserve their structure
     if (Array.isArray(response)) {
       // For arrays, add metadata as a property without spreading
-      Object.defineProperty(response, 'metadata', {
+      Object.defineProperty(response, "metadata", {
         value: { apiMetrics },
         enumerable: false,
-        configurable: true
+        configurable: true,
       });
       return response;
     }
@@ -303,6 +343,16 @@ class LinearMCPClient {
       description: args.description,
       priority: args.priority,
       stateId: args.status,
+      parentId: args.parentId,
+      assigneeId: args.assigneeId,
+      labelIds: args.labels,
+      estimate: args.estimate,
+      dueDate: args.dueDate,
+      projectId: args.projectId,
+      cycleId: args.cycleId,
+      subIssueSortOrder: args.subIssueSortOrder,
+      createAsUser: args.createAsUser,
+      displayIconUrl: args.displayIconUrl,
     });
 
     const issue = await issuePayload.issue;
@@ -319,6 +369,12 @@ class LinearMCPClient {
       description: args.description,
       priority: args.priority,
       stateId: args.status,
+      assigneeId: args.assigneeId,
+      labelIds: args.labels,
+      estimate: args.estimate,
+      dueDate: args.dueDate,
+      projectId: args.projectId,
+      cycleId: args.cycleId,
     });
 
     const updatedIssue = await updatePayload.issue;
@@ -346,7 +402,9 @@ class LinearMCPClient {
         async (issue) => {
           try {
             const [state, assignee, labels] = await Promise.all([
-              this.rateLimiter.enqueue(() => issue.state) as Promise<WorkflowState>,
+              this.rateLimiter.enqueue(
+                () => issue.state,
+              ) as Promise<WorkflowState>,
               this.rateLimiter.enqueue(() => issue.assignee) as Promise<User>,
               this.rateLimiter.enqueue(() => issue.labels()) as Promise<{
                 nodes: IssueLabel[];
@@ -362,12 +420,16 @@ class LinearMCPClient {
               estimate: issue.estimate,
               status: state?.name || null,
               assignee: assignee?.name || null,
-              labels: labels?.nodes?.map((label: IssueLabel) => label.name) || [],
+              labels:
+                labels?.nodes?.map((label: IssueLabel) => label.name) || [],
               url: issue.url,
             };
           } catch (error) {
             // Return basic issue info if detailed fetch fails
-            console.error(`Failed to get details for issue ${issue.identifier}:`, error instanceof Error ? error.message : String(error));
+            console.error(
+              `Failed to get details for issue ${issue.identifier}:`,
+              error instanceof Error ? error.message : String(error),
+            );
             return {
               id: issue.id,
               identifier: issue.identifier,
@@ -390,8 +452,9 @@ class LinearMCPClient {
       // Return structured error instead of throwing
       return this.addMetricsToResponse({
         error: true,
-        message: error instanceof Error ? error.message : "Failed to search issues",
-        issues: []
+        message:
+          error instanceof Error ? error.message : "Failed to search issues",
+        issues: [],
       });
     }
   }
@@ -417,8 +480,11 @@ class LinearMCPClient {
       }
 
       // Limit processing to avoid timeouts
-      const limitedNodes = result.nodes.slice(0, Math.min(result.nodes.length, 20));
-      
+      const limitedNodes = result.nodes.slice(
+        0,
+        Math.min(result.nodes.length, 20),
+      );
+
       const issuesWithDetails = await this.rateLimiter.batch(
         limitedNodes,
         3, // Smaller batch size for reliability
@@ -438,7 +504,10 @@ class LinearMCPClient {
             };
           } catch (error) {
             // Return basic issue info if state fetch fails
-            console.error(`Failed to get state for issue ${issue.identifier}:`, error instanceof Error ? error.message : String(error));
+            console.error(
+              `Failed to get state for issue ${issue.identifier}:`,
+              error instanceof Error ? error.message : String(error),
+            );
             return {
               id: issue.id,
               identifier: issue.identifier,
@@ -459,8 +528,11 @@ class LinearMCPClient {
       // Return structured error instead of throwing
       return this.addMetricsToResponse({
         error: true,
-        message: error instanceof Error ? error.message : "Failed to fetch user issues",
-        issues: []
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch user issues",
+        issues: [],
       });
     }
   }
@@ -481,6 +553,113 @@ class LinearMCPClient {
       comment,
       issue,
     };
+  }
+
+  async createAttachment(args: CreateAttachmentArgs) {
+    const attachmentPayload = await this.client.createAttachment({
+      issueId: args.issueId,
+      title: args.title,
+      subtitle: args.subtitle,
+      url: args.url,
+      iconUrl: args.iconUrl,
+      metadata: args.metadata,
+    });
+
+    const attachment = await attachmentPayload.attachment;
+    if (!attachment) throw new Error("Failed to create attachment");
+    return attachment;
+  }
+
+  async updateAttachment(args: UpdateAttachmentArgs) {
+    const updateData: any = {};
+    if (args.title !== undefined) updateData.title = args.title;
+    if (args.subtitle !== undefined) updateData.subtitle = args.subtitle;
+    if (args.metadata !== undefined) updateData.metadata = args.metadata;
+
+    const attachmentPayload = await this.client.updateAttachment(
+      args.id,
+      updateData,
+    );
+
+    const attachment = await attachmentPayload.attachment;
+    if (!attachment) throw new Error("Failed to update attachment");
+    return attachment;
+  }
+
+  async getTeams() {
+    const result = await this.rateLimiter.enqueue(() => this.client.teams());
+    const teams = result.nodes.map((team: any) => ({
+      id: team.id,
+      name: team.name,
+      key: team.key,
+      description: team.description || null,
+    }));
+    return this.addMetricsToResponse(teams);
+  }
+
+  async getUsers() {
+    const result = await this.rateLimiter.enqueue(() => this.client.users());
+    const users = result.nodes.map((user: any) => ({
+      id: user.id,
+      name: user.name,
+      displayName: user.displayName,
+      email: user.email,
+      active: user.active,
+      admin: user.admin,
+    }));
+    return this.addMetricsToResponse(users);
+  }
+
+  async getWorkflowStates() {
+    const result = await this.rateLimiter.enqueue(() =>
+      this.client.workflowStates(),
+    );
+    const states = result.nodes.map((state: any) => ({
+      id: state.id,
+      name: state.name,
+      color: state.color,
+      type: state.type,
+      description: state.description || null,
+    }));
+    return this.addMetricsToResponse(states);
+  }
+
+  async getProjects() {
+    const result = await this.rateLimiter.enqueue(() => this.client.projects());
+    const projects = result.nodes.map((project: any) => ({
+      id: project.id,
+      name: project.name,
+      description: project.description || null,
+      state: project.state,
+      progress: project.progress,
+    }));
+    return this.addMetricsToResponse(projects);
+  }
+
+  async getLabels() {
+    const result = await this.rateLimiter.enqueue(() =>
+      this.client.issueLabels(),
+    );
+    const labels = result.nodes.map((label: any) => ({
+      id: label.id,
+      name: label.name,
+      color: label.color,
+      description: label.description || null,
+    }));
+    return this.addMetricsToResponse(labels);
+  }
+
+  async getCycles() {
+    const result = await this.rateLimiter.enqueue(() => this.client.cycles());
+    const cycles = result.nodes.map((cycle: any) => ({
+      id: cycle.id,
+      name: cycle.name,
+      number: cycle.number,
+      startsAt: cycle.startsAt,
+      endsAt: cycle.endsAt,
+      completedAt: cycle.completedAt,
+    }));
+    return this.addMetricsToResponse(cycles);
   }
 
   async getTeamIssues(teamId: string) {
@@ -616,15 +795,54 @@ class LinearMCPClient {
 const createIssueTool: Tool = {
   name: "linear_create_issue",
   description:
-    "Creates a new Linear issue with specified details. Use this to create tickets for tasks, bugs, or feature requests. Returns the created issue's identifier and URL. Required fields are title and teamId, with optional description, priority (0-4, where 0 is no priority and 1 is urgent), and status.",
+    "Creates a new Linear issue with comprehensive details. Use this to create tickets for tasks, bugs, or feature requests. Returns the created issue's identifier and URL. Required fields are title and teamId. Optional fields include description, priority (0-4), status, parentId (for sub-issues), assigneeId, labels (array of label IDs), estimate (story points), dueDate, projectId, cycleId, subIssueSortOrder, and OAuth actor fields.",
   inputSchema: {
     type: "object",
     properties: {
       title: { type: "string", description: "Issue title" },
       teamId: { type: "string", description: "Team ID" },
       description: { type: "string", description: "Issue description" },
-      priority: { type: "number", description: "Priority (0-4)" },
-      status: { type: "string", description: "Issue status" },
+      priority: {
+        type: "number",
+        description:
+          "Priority (0-4, where 0=none, 1=urgent, 2=high, 3=normal, 4=low)",
+      },
+      status: { type: "string", description: "Issue status/state ID" },
+      parentId: {
+        type: "string",
+        description: "Parent issue ID (to create a sub-issue)",
+      },
+      assigneeId: {
+        type: "string",
+        description: "User ID to assign this issue to",
+      },
+      labels: {
+        type: "array",
+        items: { type: "string" },
+        description: "Array of label IDs to add to this issue",
+      },
+      estimate: { type: "number", description: "Story points estimate" },
+      dueDate: {
+        type: "string",
+        description: "Due date in ISO 8601 format (YYYY-MM-DD)",
+      },
+      projectId: {
+        type: "string",
+        description: "Project ID to add this issue to",
+      },
+      cycleId: { type: "string", description: "Cycle ID to add this issue to" },
+      subIssueSortOrder: {
+        type: "number",
+        description: "Position in parent's sub-issue list (for sub-issues)",
+      },
+      createAsUser: {
+        type: "string",
+        description: "Custom username for OAuth actor authorization",
+      },
+      displayIconUrl: {
+        type: "string",
+        description: "Custom avatar URL for OAuth actor authorization",
+      },
     },
     required: ["title", "teamId"],
   },
@@ -633,15 +851,35 @@ const createIssueTool: Tool = {
 const updateIssueTool: Tool = {
   name: "linear_update_issue",
   description:
-    "Updates an existing Linear issue's properties. Use this to modify issue details like title, description, priority, or status. Requires the issue ID and accepts any combination of updatable fields. Returns the updated issue's identifier and URL.",
+    "Updates an existing Linear issue's properties. Use this to modify issue details like title, description, priority, status, assignment, labels, estimates, due dates, and project/cycle associations. Requires the issue ID and accepts any combination of updatable fields. Returns the updated issue's identifier and URL.",
   inputSchema: {
     type: "object",
     properties: {
       id: { type: "string", description: "Issue ID" },
       title: { type: "string", description: "New title" },
       description: { type: "string", description: "New description" },
-      priority: { type: "number", description: "New priority (0-4)" },
-      status: { type: "string", description: "New status" },
+      priority: {
+        type: "number",
+        description:
+          "New priority (0-4, where 0=none, 1=urgent, 2=high, 3=normal, 4=low)",
+      },
+      status: { type: "string", description: "New status/state ID" },
+      assigneeId: {
+        type: "string",
+        description: "New assignee user ID (use null to unassign)",
+      },
+      labels: {
+        type: "array",
+        items: { type: "string" },
+        description: "New array of label IDs (replaces existing labels)",
+      },
+      estimate: { type: "number", description: "New story points estimate" },
+      dueDate: {
+        type: "string",
+        description: "New due date in ISO 8601 format (YYYY-MM-DD)",
+      },
+      projectId: { type: "string", description: "New project ID" },
+      cycleId: { type: "string", description: "New cycle ID" },
     },
     required: ["id"],
   },
@@ -735,6 +973,118 @@ const addCommentTool: Tool = {
       },
     },
     required: ["issueId", "body"],
+  },
+};
+
+const createAttachmentTool: Tool = {
+  name: "linear_create_attachment",
+  description:
+    "Creates an attachment for a Linear issue. Attachments link external resources to issues with custom titles, subtitles, and metadata. The URL acts as an idempotent key - creating an attachment with the same URL will update the existing one.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      issueId: { type: "string", description: "ID of the issue to attach to" },
+      title: { type: "string", description: "Attachment title" },
+      subtitle: {
+        type: "string",
+        description: "Attachment subtitle (supports formatting variables)",
+      },
+      url: {
+        type: "string",
+        description: "URL of the external resource (must be unique per issue)",
+      },
+      iconUrl: {
+        type: "string",
+        description: "Optional icon URL for the attachment",
+      },
+      metadata: {
+        type: "object",
+        description: "Optional metadata object for the attachment",
+      },
+    },
+    required: ["issueId", "title", "url"],
+  },
+};
+
+const updateAttachmentTool: Tool = {
+  name: "linear_update_attachment",
+  description:
+    "Updates an existing Linear attachment's title, subtitle, or metadata. Use this to reflect changes in the external resource status or add additional context.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "Attachment ID" },
+      title: { type: "string", description: "New attachment title" },
+      subtitle: {
+        type: "string",
+        description: "New attachment subtitle (supports formatting variables)",
+      },
+      metadata: {
+        type: "object",
+        description: "New metadata object for the attachment",
+      },
+    },
+    required: ["id"],
+  },
+};
+
+const getTeamsTool: Tool = {
+  name: "linear_get_teams",
+  description:
+    "Retrieves all teams in the Linear organization. Returns team IDs, names, keys, and descriptions. Essential for finding team IDs needed for creating issues.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+  },
+};
+
+const getUsersTool: Tool = {
+  name: "linear_get_users",
+  description:
+    "Retrieves all users in the Linear organization. Returns user IDs, names, display names, emails, and status. Essential for finding user IDs needed for assigning issues.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+  },
+};
+
+const getWorkflowStatesTool: Tool = {
+  name: "linear_get_workflow_states",
+  description:
+    "Retrieves all workflow states (issue statuses) available in the organization. Returns state IDs, names, colors, and types. Essential for finding valid status values for creating and updating issues.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+  },
+};
+
+const getProjectsTool: Tool = {
+  name: "linear_get_projects",
+  description:
+    "Retrieves all projects in the Linear organization. Returns project IDs, names, descriptions, states, and progress. Essential for finding project IDs needed for associating issues with projects.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+  },
+};
+
+const getLabelsTool: Tool = {
+  name: "linear_get_labels",
+  description:
+    "Retrieves all issue labels available in the organization. Returns label IDs, names, colors, and descriptions. Essential for finding label IDs needed for tagging issues.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+  },
+};
+
+const getCyclesTool: Tool = {
+  name: "linear_get_cycles",
+  description:
+    "Retrieves all cycles (sprints) in the Linear organization. Returns cycle IDs, names, numbers, and date ranges. Essential for finding cycle IDs needed for sprint planning.",
+  inputSchema: {
+    type: "object",
+    properties: {},
   },
 };
 
@@ -907,14 +1257,54 @@ const CreateIssueArgsSchema = z.object({
   description: z.string().optional().describe("Issue description"),
   priority: z.number().min(0).max(4).optional().describe("Priority (0-4)"),
   status: z.string().optional().describe("Issue status"),
+  parentId: z
+    .string()
+    .optional()
+    .describe("Parent issue ID (to create a sub-issue)"),
+  assigneeId: z.string().optional().describe("User ID to assign this issue to"),
+  labels: z
+    .array(z.string())
+    .optional()
+    .describe("Array of label IDs to add to this issue"),
+  estimate: z.number().optional().describe("Story points estimate"),
+  dueDate: z
+    .string()
+    .optional()
+    .describe("Due date in ISO 8601 format (YYYY-MM-DD)"),
+  projectId: z.string().optional().describe("Project ID to add this issue to"),
+  cycleId: z.string().optional().describe("Cycle ID to add this issue to"),
+  subIssueSortOrder: z
+    .number()
+    .optional()
+    .describe("Position in parent's sub-issue list (for sub-issues)"),
+  createAsUser: z
+    .string()
+    .optional()
+    .describe("Custom username for OAuth actor authorization"),
+  displayIconUrl: z
+    .string()
+    .optional()
+    .describe("Custom avatar URL for OAuth actor authorization"),
 });
 
 const UpdateIssueArgsSchema = z.object({
   id: z.string().describe("Issue ID"),
   title: z.string().optional().describe("New title"),
   description: z.string().optional().describe("New description"),
-  priority: z.number().optional().describe("New priority (0-4)"),
+  priority: z.number().min(0).max(4).optional().describe("New priority (0-4)"),
   status: z.string().optional().describe("New status"),
+  assigneeId: z.string().optional().describe("New assignee user ID"),
+  labels: z
+    .array(z.string())
+    .optional()
+    .describe("New array of label IDs (replaces existing labels)"),
+  estimate: z.number().optional().describe("New story points estimate"),
+  dueDate: z
+    .string()
+    .optional()
+    .describe("New due date in ISO 8601 format (YYYY-MM-DD)"),
+  projectId: z.string().optional().describe("New project ID"),
+  cycleId: z.string().optional().describe("New cycle ID"),
 });
 
 const SearchIssuesArgsSchema = z.object({
@@ -971,6 +1361,39 @@ const AddCommentArgsSchema = z.object({
     .describe("Optional avatar URL for the comment"),
 });
 
+const CreateAttachmentArgsSchema = z.object({
+  issueId: z.string().describe("ID of the issue to attach to"),
+  title: z.string().describe("Attachment title"),
+  subtitle: z
+    .string()
+    .optional()
+    .describe("Attachment subtitle (supports formatting variables)"),
+  url: z
+    .string()
+    .describe("URL of the external resource (must be unique per issue)"),
+  iconUrl: z
+    .string()
+    .optional()
+    .describe("Optional icon URL for the attachment"),
+  metadata: z
+    .record(z.any())
+    .optional()
+    .describe("Optional metadata object for the attachment"),
+});
+
+const UpdateAttachmentArgsSchema = z.object({
+  id: z.string().describe("Attachment ID"),
+  title: z.string().optional().describe("New attachment title"),
+  subtitle: z
+    .string()
+    .optional()
+    .describe("New attachment subtitle (supports formatting variables)"),
+  metadata: z
+    .record(z.any())
+    .optional()
+    .describe("New metadata object for the attachment"),
+});
+
 async function main() {
   try {
     dotenv.config();
@@ -1008,7 +1431,9 @@ async function main() {
     }));
 
     server.setRequestHandler(ReadResourceRequestSchema, async () => {
-      throw new Error("Resource reading is disabled to prevent API rate limiting. Use the tools instead.");
+      throw new Error(
+        "Resource reading is disabled to prevent API rate limiting. Use the tools instead.",
+      );
     });
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -1018,6 +1443,14 @@ async function main() {
         searchIssuesTool,
         getUserIssuesTool,
         addCommentTool,
+        createAttachmentTool,
+        updateAttachmentTool,
+        getTeamsTool,
+        getUsersTool,
+        getWorkflowStatesTool,
+        getProjectsTool,
+        getLabelsTool,
+        getCyclesTool,
       ],
     }));
 
@@ -1057,7 +1490,11 @@ async function main() {
         const toolTimeout = 45000; // 45 second global timeout
         const timeoutPromise = new Promise<never>((_, reject) => {
           setTimeout(() => {
-            reject(new Error(`Tool call timeout after ${toolTimeout}ms for ${request.params.name}`));
+            reject(
+              new Error(
+                `Tool call timeout after ${toolTimeout}ms for ${request.params.name}`,
+              ),
+            );
           }, toolTimeout);
         });
 
@@ -1163,6 +1600,146 @@ async function main() {
                   {
                     type: "text",
                     text: `Added comment to issue ${issue?.identifier}\nURL: ${comment.url}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_create_attachment": {
+              const validatedArgs = CreateAttachmentArgsSchema.parse(args);
+              const attachment =
+                await linearClient.createAttachment(validatedArgs);
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Created attachment "${attachment.title}" for issue\nAttachment ID: ${attachment.id}\nURL: ${validatedArgs.url}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_update_attachment": {
+              const validatedArgs = UpdateAttachmentArgsSchema.parse(args);
+              const attachment =
+                await linearClient.updateAttachment(validatedArgs);
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Updated attachment "${attachment.title}"\nAttachment ID: ${attachment.id}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_get_teams": {
+              const teams = await linearClient.getTeams();
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Found ${teams.length} teams:\n${teams
+                      .map(
+                        (team: any) =>
+                          `- ${team.name} (${team.key})\n  ID: ${team.id}`,
+                      )
+                      .join("\n")}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_get_users": {
+              const users = await linearClient.getUsers();
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Found ${users.length} users:\n${users
+                      .map(
+                        (user: any) =>
+                          `- ${user.name} (${user.displayName})\n  ID: ${user.id}\n  Email: ${user.email}`,
+                      )
+                      .join("\n")}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_get_workflow_states": {
+              const states = await linearClient.getWorkflowStates();
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Found ${states.length} workflow states:\n${states
+                      .map(
+                        (state: any) =>
+                          `- ${state.name} (${state.type})\n  ID: ${state.id}`,
+                      )
+                      .join("\n")}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_get_projects": {
+              const projects = await linearClient.getProjects();
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Found ${projects.length} projects:\n${projects
+                      .map(
+                        (project: any) =>
+                          `- ${project.name}\n  ID: ${project.id}\n  State: ${project.state}`,
+                      )
+                      .join("\n")}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_get_labels": {
+              const labels = await linearClient.getLabels();
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Found ${labels.length} labels:\n${labels
+                      .map(
+                        (label: any) =>
+                          `- ${label.name}\n  ID: ${label.id}\n  Color: ${label.color}`,
+                      )
+                      .join("\n")}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_get_cycles": {
+              const cycles = await linearClient.getCycles();
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Found ${cycles.length} cycles:\n${cycles
+                      .map(
+                        (cycle: any) =>
+                          `- ${cycle.name} (#${cycle.number})\n  ID: ${cycle.id}\n  ${cycle.startsAt} - ${cycle.endsAt}`,
+                      )
+                      .join("\n")}`,
                     metadata: baseResponse,
                   },
                 ],
