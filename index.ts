@@ -2017,12 +2017,25 @@ async function main() {
                 content: [
                   {
                     type: "text",
-                    text: `Found ${comments.length} comments:\n${comments
-                      .map(
-                        (comment: any) =>
-                          `- ${comment.user?.displayName || comment.user?.name || "Unknown"} (${comment.createdAt}):\n  ${comment.body.substring(0, 100)}${comment.body.length > 100 ? "..." : ""}\n  URL: ${comment.url}`,
-                      )
-                      .join("\n")}`,
+                    text: (() => {
+                      const MAX_TOTAL_LENGTH = 8000;
+                      let totalLength = 0;
+                      const truncatedComments = [];
+                      
+                      for (const comment of comments) {
+                        const commentText = `- ${comment.user?.displayName || comment.user?.name || "Unknown"} (${comment.createdAt}):\n  ${comment.body}\n  URL: ${comment.url}`;
+                        
+                        if (totalLength + commentText.length > MAX_TOTAL_LENGTH) {
+                          truncatedComments.push("... (remaining comments truncated due to length limit)");
+                          break;
+                        }
+                        
+                        truncatedComments.push(commentText);
+                        totalLength += commentText.length;
+                      }
+                      
+                      return `Found ${comments.length} comments:\n${truncatedComments.join("\n")}`;
+                    })(),
                     metadata: baseResponse,
                   },
                 ],
@@ -2040,12 +2053,25 @@ async function main() {
                 content: [
                   {
                     type: "text",
-                    text: `Found ${comments.length} comments:\n${comments
-                      .map(
-                        (comment: any) =>
-                          `- ${comment.user?.displayName || comment.user?.name || "Unknown"} on ${comment.issue?.identifier || "Unknown"} (${comment.createdAt}):\n  ${comment.body.substring(0, 100)}${comment.body.length > 100 ? "..." : ""}\n  URL: ${comment.url}`,
-                      )
-                      .join("\n")}`,
+                    text: (() => {
+                      const MAX_TOTAL_LENGTH = 8000;
+                      let totalLength = 0;
+                      const truncatedComments = [];
+                      
+                      for (const comment of comments) {
+                        const commentText = `- ${comment.user?.displayName || comment.user?.name || "Unknown"} on ${comment.issue?.identifier || "Unknown"} (${comment.createdAt}):\n  ${comment.body}\n  URL: ${comment.url}`;
+                        
+                        if (totalLength + commentText.length > MAX_TOTAL_LENGTH) {
+                          truncatedComments.push("... (remaining comments truncated due to length limit)");
+                          break;
+                        }
+                        
+                        truncatedComments.push(commentText);
+                        totalLength += commentText.length;
+                      }
+                      
+                      return `Found ${comments.length} comments:\n${truncatedComments.join("\n")}`;
+                    })(),
                     metadata: baseResponse,
                   },
                 ],
