@@ -759,6 +759,8 @@ class LinearMCPClient {
         { title: { contains: args.query } },
         { description: { contains: args.query } },
         { identifier: { contains: args.query } },
+        // Also try to match identifiers that end with the query (e.g., "131" matches "INT-131")
+        { identifier: { endsWith: args.query } },
       ];
     }
 
@@ -1583,7 +1585,7 @@ async function main() {
                     text: `Found ${issues.length} issues:\n${issues
                       .map(
                         (issue: LinearIssueResponse) =>
-                          `- ${issue.identifier}: ${issue.title}\n  Priority: ${issue.priority || "None"}\n  Status: ${issue.stateName}\n  ${issue.url}`,
+                          `- ${issue.identifier}: ${issue.title}\n  ID: ${issue.id}\n  Priority: ${issue.priority || "None"}\n  Status: ${issue.stateName}\n  ${issue.url}`,
                       )
                       .join("\n")}`,
                     metadata: baseResponse,
