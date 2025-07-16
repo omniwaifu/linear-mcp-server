@@ -99,6 +99,22 @@ interface UpdateAttachmentArgs {
   metadata?: Record<string, any>;
 }
 
+interface GetCommentsArgs {
+  issueId: string;
+  includeArchived?: boolean;
+  limit?: number;
+  sinceDate?: string;
+}
+
+interface GetBulkCommentsArgs {
+  teamId?: string;
+  assigneeId?: string;
+  userId?: string;
+  sinceDate?: string;
+  limit?: number;
+  includeArchived?: boolean;
+}
+
 interface RateLimiterMetrics {
   totalRequests: number;
   requestsInLastHour: number;
@@ -663,6 +679,242 @@ class LinearMCPClient {
     return this.addMetricsToResponse(cycles);
   }
 
+  async getComments(args: GetCommentsArgs) {
+    try {
+      const issue = await this.rateLimiter.enqueue(() =>
+        this.client.issue(args.issueId),
+      );
+
+      if (!issue) throw new Error(`Issue ${args.issueId} not found`);
+
+      const filter: any = {};
+      if (args.sinceDate) {
+        filter.createdAt = { gt: args.sinceDate };
+      }
+
+      const result = await this.rateLimiter.enqueue(() =>
+        issue.comments({
+          first: args.limit || 50,
+          includeArchived: args.includeArchived || false,
+          filter: Object.keys(filter).length > 0 ? filter : undefined,
+        }),
+      );
+
+      if (!result?.nodes || result.nodes.length === 0) {
+        return this.addMetricsToResponse([]);
+      }
+
+      const commentsWithDetails = await this.rateLimiter.batch(
+        result.nodes,
+        5, // Process in batches of 5
+        async (comment) => {
+          try {
+            const [user, issue] = (await Promise.all([
+              this.rateLimiter.enqueue(() => comment.user),
+              this.rateLimiter.enqueue(() => comment.issue),
+            ])) as [any, any];
+
+            return {
+              id: comment.id,
+              body: comment.body,
+              createdAt: comment.createdAt,
+              updatedAt: comment.updatedAt,
+              url: comment.url,
+              user: user
+                ? {
+                    id: user.id,
+                    name: user.name,
+                    displayName: user.displayName,
+                    email: user.email,
+                  }
+                : null,
+              issue: issue
+                ? {
+                    id: issue.id,
+                    identifier: issue.identifier,
+                    title: issue.title,
+                  }
+                : null,
+            };
+          } catch (error) {
+            // Return basic comment info if details fail
+            console.error(
+              `Failed to get details for comment ${comment.id}:`,
+              error instanceof Error ? error.message : String(error),
+            );
+            return {
+              id: comment.id,
+              body: comment.body,
+              createdAt: comment.createdAt,
+              updatedAt: comment.updatedAt,
+              url: comment.url,
+              user: null,
+              issue: null,
+            };
+          }
+        },
+        "getComments",
+      );
+
+      return this.addMetricsToResponse(commentsWithDetails);
+    } catch (error) {
+      console.error(`Error in getComments: ${error}`);
+      return this.addMetricsToResponse({
+        error: true,
+        message:
+          error instanceof Error ? error.message : "Failed to fetch comments",
+        comments: [],
+      });
+    }
+  }
+
+  async getBulkComments(args: GetBulkCommentsArgs) {
+    try {
+      // Build filter for comments based on args
+      const filter: any = {};
+
+      if (args.sinceDate) {
+        filter.createdAt = { gt: args.sinceDate };
+      }
+
+      if (args.userId) {
+        filter.user = { id: { eq: args.userId } };
+      }
+
+      // If we have issue-level filters, we need to filter by issues first
+      let issueFilter: any = {};
+      if (args.teamId) {
+        issueFilter.team = { id: { eq: args.teamId } };
+      }
+      if (args.assigneeId) {
+        issueFilter.assignee = { id: { eq: args.assigneeId } };
+      }
+
+      // Get comments with filters
+      const result = await this.rateLimiter.enqueue(() =>
+        this.client.comments({
+          filter: filter,
+          first: Math.min(args.limit || 50, 100), // Cap at 100 for performance
+          includeArchived: args.includeArchived || false,
+          orderBy: LinearDocument.PaginationOrderBy.UpdatedAt,
+        }),
+      );
+
+      if (!result?.nodes || result.nodes.length === 0) {
+        return this.addMetricsToResponse([]);
+      }
+
+      let filteredComments = result.nodes;
+
+      // If we have issue-level filters, we need to filter comments by their issues
+      if (args.teamId || args.assigneeId) {
+        const commentsWithIssues = await this.rateLimiter.batch(
+          result.nodes,
+          5,
+          async (comment) => {
+            try {
+              const issue = await this.rateLimiter.enqueue(() => comment.issue);
+              if (!issue) return null;
+
+              // Check team filter
+              if (args.teamId) {
+                const team = (await this.rateLimiter.enqueue(
+                  () => (issue as any).team,
+                )) as any;
+                if (!team || team.id !== args.teamId) return null;
+              }
+
+              // Check assignee filter
+              if (args.assigneeId) {
+                const assignee = (await this.rateLimiter.enqueue(
+                  () => (issue as any).assignee,
+                )) as any;
+                if (!assignee || assignee.id !== args.assigneeId) return null;
+              }
+
+              return comment;
+            } catch (error) {
+              console.error(
+                `Failed to check issue for comment ${comment.id}:`,
+                error,
+              );
+              return null;
+            }
+          },
+          "filterCommentsByIssue",
+        );
+
+        filteredComments = commentsWithIssues.filter(
+          (comment) => comment !== null,
+        );
+      }
+
+      // Get full details for the filtered comments
+      const commentsWithDetails = await this.rateLimiter.batch(
+        filteredComments,
+        5,
+        async (comment) => {
+          try {
+            const [user, issue] = (await Promise.all([
+              this.rateLimiter.enqueue(() => comment.user),
+              this.rateLimiter.enqueue(() => comment.issue),
+            ])) as [any, any];
+
+            return {
+              id: comment.id,
+              body: comment.body,
+              createdAt: comment.createdAt,
+              updatedAt: comment.updatedAt,
+              url: comment.url,
+              user: user
+                ? {
+                    id: user.id,
+                    name: user.name,
+                    displayName: user.displayName,
+                    email: user.email,
+                  }
+                : null,
+              issue: issue
+                ? {
+                    id: issue.id,
+                    identifier: issue.identifier,
+                    title: issue.title,
+                  }
+                : null,
+            };
+          } catch (error) {
+            console.error(
+              `Failed to get details for comment ${comment.id}:`,
+              error instanceof Error ? error.message : String(error),
+            );
+            return {
+              id: comment.id,
+              body: comment.body,
+              createdAt: comment.createdAt,
+              updatedAt: comment.updatedAt,
+              url: comment.url,
+              user: null,
+              issue: null,
+            };
+          }
+        },
+        "getBulkComments",
+      );
+
+      return this.addMetricsToResponse(commentsWithDetails);
+    } catch (error) {
+      console.error(`Error in getBulkComments: ${error}`);
+      return this.addMetricsToResponse({
+        error: true,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch bulk comments",
+        comments: [],
+      });
+    }
+  }
+
   async getTeamIssues(teamId: string) {
     const team = await this.rateLimiter.enqueue(() => this.client.team(teamId));
     if (!team) throw new Error(`Team ${teamId} not found`);
@@ -1092,6 +1344,75 @@ const getCyclesTool: Tool = {
   },
 };
 
+const getCommentsTool: Tool = {
+  name: "linear_get_comments",
+  description:
+    "Retrieves all comments for a specific Linear issue. Returns comment details including body, author, timestamps, and URLs. Essential for understanding issue context and discussion history. Supports filtering by date for large issues.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      issueId: {
+        type: "string",
+        description: "ID of the issue to retrieve comments for",
+      },
+      includeArchived: {
+        type: "boolean",
+        description: "Include archived comments in results (default: false)",
+      },
+      limit: {
+        type: "number",
+        description: "Maximum number of comments to return (default: 50)",
+      },
+      sinceDate: {
+        type: "string",
+        description:
+          "Filter comments created after this date (ISO 8601 format or relative like '-P1D' for last day)",
+      },
+    },
+    required: ["issueId"],
+  },
+};
+
+const getBulkCommentsTool: Tool = {
+  name: "linear_get_bulk_comments",
+  description:
+    "Retrieves comments across multiple issues with filtering options. Perfect for finding recent activity, comments on issues you're involved in, or team-wide comment activity. Supports time-based filtering (e.g., 'last day') and involvement filtering.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      teamId: {
+        type: "string",
+        description:
+          "Filter comments by team ID (comments on issues in this team)",
+      },
+      assigneeId: {
+        type: "string",
+        description:
+          "Filter comments by assignee ID (comments on issues assigned to this user)",
+      },
+      userId: {
+        type: "string",
+        description:
+          "Filter comments by author ID (comments written by this user)",
+      },
+      sinceDate: {
+        type: "string",
+        description:
+          "Filter comments created after this date (ISO 8601 format or relative like '-P1D' for last day)",
+      },
+      limit: {
+        type: "number",
+        description:
+          "Maximum number of comments to return (default: 50, max: 100)",
+      },
+      includeArchived: {
+        type: "boolean",
+        description: "Include archived comments in results (default: false)",
+      },
+    },
+  },
+};
+
 const resourceTemplates: ResourceTemplate[] = [
   {
     uriTemplate: "linear-issue:///{issueId}",
@@ -1182,6 +1503,10 @@ When users ask about issues for themselves or others:
 Examples:
 - User asks: "What are my issues?" → linear_get_user_issues({})
 - User asks: "What is Justin working on?" → First get organization data, find Justin's ID, then linear_get_user_issues({"userId": "found-user-id"})
+- User asks: "Show me all comments on INT-127" → linear_get_comments({"issueId": "issue-id-for-INT-127"})
+- User asks: "Show me recent comments on INT-127" → linear_get_comments({"issueId": "issue-id-for-INT-127", "sinceDate": "-P1D"})
+- User asks: "Show me comments on issues I'm assigned to from the last day" → linear_get_bulk_comments({"assigneeId": "your-user-id", "sinceDate": "-P1D"})
+- User asks: "What's the recent discussion on my team's issues?" → linear_get_bulk_comments({"teamId": "your-team-id", "sinceDate": "-P1W"})
 
 Tool Usage:
 - linear_create_issue:
@@ -1211,6 +1536,27 @@ Tool Usage:
   - supports full markdown formatting
   - use displayIconUrl for bot/integration avatars
   - createAsUser for custom comment attribution
+
+- linear_get_comments:
+  - retrieves all comments for a specific issue
+  - supports date filtering with sinceDate (useful for large issues)
+  - returns comment body, author, timestamps, and URLs
+  - essential for understanding issue context and discussion history
+
+- linear_get_bulk_comments:
+  - retrieves comments across multiple issues with powerful filtering
+  - perfect for finding recent activity or comments on issues you're involved in
+  - supports filtering by team, assignee, author, and date
+  - ideal for information retrieval scenarios like "show me recent comments on my team's issues"
+
+Date Format Support:
+Both comment retrieval functions support flexible date filtering with sinceDate:
+- ISO 8601 format: "2024-01-15T10:00:00Z" (absolute dates)
+- Relative format: "-P1D" (last day), "-P1W" (last week), "-P2W" (last 2 weeks), "-P1M" (last month)
+- The relative format uses ISO 8601 duration syntax where P = period, followed by time units:
+  - D = days, W = weeks, M = months, Y = years
+  - Negative values indicate "ago" (e.g., "-P1D" = 1 day ago)
+  - Examples: "-P3D" (3 days ago), "-P2W" (2 weeks ago), "-P1M" (1 month ago)
 
 Best practices:
 - When creating issues:
@@ -1398,6 +1744,55 @@ const UpdateAttachmentArgsSchema = z.object({
     .describe("New metadata object for the attachment"),
 });
 
+const GetCommentsArgsSchema = z.object({
+  issueId: z.string().describe("ID of the issue to retrieve comments for"),
+  includeArchived: z
+    .boolean()
+    .optional()
+    .describe("Include archived comments in results (default: false)"),
+  limit: z
+    .number()
+    .optional()
+    .describe("Maximum number of comments to return (default: 50)"),
+  sinceDate: z
+    .string()
+    .optional()
+    .describe(
+      "Filter comments created after this date (ISO 8601 format or relative like '-P1D' for last day)",
+    ),
+});
+
+const GetBulkCommentsArgsSchema = z.object({
+  teamId: z
+    .string()
+    .optional()
+    .describe("Filter comments by team ID (comments on issues in this team)"),
+  assigneeId: z
+    .string()
+    .optional()
+    .describe(
+      "Filter comments by assignee ID (comments on issues assigned to this user)",
+    ),
+  userId: z
+    .string()
+    .optional()
+    .describe("Filter comments by author ID (comments written by this user)"),
+  sinceDate: z
+    .string()
+    .optional()
+    .describe(
+      "Filter comments created after this date (ISO 8601 format or relative like '-P1D' for last day)",
+    ),
+  limit: z
+    .number()
+    .optional()
+    .describe("Maximum number of comments to return (default: 50, max: 100)"),
+  includeArchived: z
+    .boolean()
+    .optional()
+    .describe("Include archived comments in results (default: false)"),
+});
+
 async function main() {
   try {
     dotenv.config();
@@ -1447,6 +1842,8 @@ async function main() {
         searchIssuesTool,
         getUserIssuesTool,
         addCommentTool,
+        getCommentsTool,
+        getBulkCommentsTool,
         createAttachmentTool,
         updateAttachmentTool,
         getTeamsTool,
@@ -1604,6 +2001,51 @@ async function main() {
                   {
                     type: "text",
                     text: `Added comment to issue ${issue?.identifier}\nURL: ${comment.url}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_get_comments": {
+              const validatedArgs = GetCommentsArgsSchema.parse(args);
+              const response = await linearClient.getComments(validatedArgs);
+
+              const comments = Array.isArray(response) ? response : [];
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Found ${comments.length} comments:\n${comments
+                      .map(
+                        (comment: any) =>
+                          `- ${comment.user?.displayName || comment.user?.name || "Unknown"} (${comment.createdAt}):\n  ${comment.body.substring(0, 100)}${comment.body.length > 100 ? "..." : ""}\n  URL: ${comment.url}`,
+                      )
+                      .join("\n")}`,
+                    metadata: baseResponse,
+                  },
+                ],
+              };
+            }
+
+            case "linear_get_bulk_comments": {
+              const validatedArgs = GetBulkCommentsArgsSchema.parse(args);
+              const response =
+                await linearClient.getBulkComments(validatedArgs);
+
+              const comments = Array.isArray(response) ? response : [];
+
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Found ${comments.length} comments:\n${comments
+                      .map(
+                        (comment: any) =>
+                          `- ${comment.user?.displayName || comment.user?.name || "Unknown"} on ${comment.issue?.identifier || "Unknown"} (${comment.createdAt}):\n  ${comment.body.substring(0, 100)}${comment.body.length > 100 ? "..." : ""}\n  URL: ${comment.url}`,
+                      )
+                      .join("\n")}`,
                     metadata: baseResponse,
                   },
                 ],
@@ -1783,7 +2225,7 @@ async function main() {
               content: [
                 {
                   type: "text",
-                  text: `VALIDATION_ERROR: Invalid request parameters\n${formattedErrors.map(err => `- ${err.path.join('.')}: ${err.message}`).join('\n')}`,
+                  text: `VALIDATION_ERROR: Invalid request parameters\n${formattedErrors.map((err) => `- ${err.path.join(".")}: ${err.message}`).join("\n")}`,
                   metadata: {
                     error: true,
                     ...errorResponse,
@@ -1799,7 +2241,7 @@ async function main() {
               content: [
                 {
                   type: "text",
-                  text: `API_ERROR: ${error.message}\nStatus: ${(error as any).response?.status || 'unknown'}`,
+                  text: `API_ERROR: ${error.message}\nStatus: ${(error as any).response?.status || "unknown"}`,
                   metadata: {
                     error: true,
                     ...errorResponse,
