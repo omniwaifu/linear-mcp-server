@@ -2011,30 +2011,71 @@ async function main() {
               const validatedArgs = GetCommentsArgsSchema.parse(args);
               const response = await linearClient.getComments(validatedArgs);
 
+              // STRICT VALIDATION: Never fabricate comment content
+              if (!response || response.error) {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `ERROR: Failed to retrieve comments - ${response?.message || "Unknown error"}`,
+                      metadata: baseResponse,
+                    },
+                  ],
+                };
+              }
+
               const comments = Array.isArray(response) ? response : [];
+              
+              // DEBUG: Log actual response structure to console for debugging
+              console.error(`[DEBUG] getComments response type: ${typeof response}, isArray: ${Array.isArray(response)}, length: ${comments.length}`);
 
               return {
                 content: [
                   {
                     type: "text",
                     text: (() => {
-                      const MAX_TOTAL_LENGTH = 8000;
-                      let totalLength = 0;
-                      const truncatedComments = [];
-                      
-                      for (const comment of comments) {
-                        const commentText = `- ${comment.user?.displayName || comment.user?.name || "Unknown"} (${comment.createdAt}):\n  ${comment.body}\n  URL: ${comment.url}`;
-                        
-                        if (totalLength + commentText.length > MAX_TOTAL_LENGTH) {
-                          truncatedComments.push("... (remaining comments truncated due to length limit)");
-                          break;
-                        }
-                        
-                        truncatedComments.push(commentText);
-                        totalLength += commentText.length;
+                      if (comments.length === 0) {
+                        return "Found 0 comments";
                       }
                       
-                      return `Found ${comments.length} comments:\n${truncatedComments.join("\n")}`;
+                      // Summarize comments with intelligent content detection
+                      const commentSummaries = comments.map((comment, index) => {
+                        // STRICT VALIDATION: Ensure comment has required fields
+                        if (!comment || typeof comment !== 'object') {
+                          console.error(`[ERROR] Invalid comment at index ${index}:`, comment);
+                          return `- [INVALID COMMENT DATA at index ${index}]`;
+                        }
+                        
+                        const body = comment.body || "[NO BODY]";
+                        const user = comment.user || null;
+                        const createdAt = comment.createdAt || "[NO DATE]";
+                        const url = comment.url || "[NO URL]";
+                        
+                        let bodyPreview: string;
+                        
+                        // Detect code blocks (markdown code fences or long lines of code-like content)
+                        const hasCodeBlocks = body.includes('```') || body.includes('    ') || /^[^\s].*[{}\[\];].*$/m.test(body);
+                        const hasLongLines = body.split('\n').some((line: string) => line.length > 120);
+                        
+                        if (hasCodeBlocks || hasLongLines) {
+                          // For code-heavy comments, show first line + summary
+                          const firstLine = body.split('\n')[0];
+                          const lineCount = body.split('\n').length;
+                          bodyPreview = firstLine.length > 80 
+                            ? firstLine.substring(0, 80) + `... [${lineCount} lines total, likely contains code]`
+                            : firstLine + (lineCount > 1 ? ` [${lineCount} lines total, likely contains code]` : '');
+                        } else {
+                          // For regular text comments, show more content
+                          bodyPreview = body.length > 200 
+                            ? body.substring(0, 200) + "..." 
+                            : body;
+                        }
+                        
+                        const userName = user?.displayName || user?.name || "Unknown";
+                        return `- ${userName} (${createdAt}):\n  ${bodyPreview}\n  URL: ${url}`;
+                      });
+                      
+                      return `Found ${comments.length} comments:\n${commentSummaries.join("\n")}`;
                     })(),
                     metadata: baseResponse,
                   },
@@ -2047,30 +2088,73 @@ async function main() {
               const response =
                 await linearClient.getBulkComments(validatedArgs);
 
+              // STRICT VALIDATION: Never fabricate comment content
+              if (!response || response.error) {
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `ERROR: Failed to retrieve bulk comments - ${response?.message || "Unknown error"}`,
+                      metadata: baseResponse,
+                    },
+                  ],
+                };
+              }
+
               const comments = Array.isArray(response) ? response : [];
+              
+              // DEBUG: Log actual response structure to console for debugging
+              console.error(`[DEBUG] getBulkComments response type: ${typeof response}, isArray: ${Array.isArray(response)}, length: ${comments.length}`);
 
               return {
                 content: [
                   {
                     type: "text",
                     text: (() => {
-                      const MAX_TOTAL_LENGTH = 8000;
-                      let totalLength = 0;
-                      const truncatedComments = [];
-                      
-                      for (const comment of comments) {
-                        const commentText = `- ${comment.user?.displayName || comment.user?.name || "Unknown"} on ${comment.issue?.identifier || "Unknown"} (${comment.createdAt}):\n  ${comment.body}\n  URL: ${comment.url}`;
-                        
-                        if (totalLength + commentText.length > MAX_TOTAL_LENGTH) {
-                          truncatedComments.push("... (remaining comments truncated due to length limit)");
-                          break;
-                        }
-                        
-                        truncatedComments.push(commentText);
-                        totalLength += commentText.length;
+                      if (comments.length === 0) {
+                        return "Found 0 comments";
                       }
                       
-                      return `Found ${comments.length} comments:\n${truncatedComments.join("\n")}`;
+                      // Summarize comments with intelligent content detection
+                      const commentSummaries = comments.map((comment, index) => {
+                        // STRICT VALIDATION: Ensure comment has required fields
+                        if (!comment || typeof comment !== 'object') {
+                          console.error(`[ERROR] Invalid comment at index ${index}:`, comment);
+                          return `- [INVALID COMMENT DATA at index ${index}]`;
+                        }
+                        
+                        const body = comment.body || "[NO BODY]";
+                        const user = comment.user || null;
+                        const issue = comment.issue || null;
+                        const createdAt = comment.createdAt || "[NO DATE]";
+                        const url = comment.url || "[NO URL]";
+                        
+                        let bodyPreview: string;
+                        
+                        // Detect code blocks (markdown code fences or long lines of code-like content)
+                        const hasCodeBlocks = body.includes('```') || body.includes('    ') || /^[^\s].*[{}\[\];].*$/m.test(body);
+                        const hasLongLines = body.split('\n').some((line: string) => line.length > 120);
+                        
+                        if (hasCodeBlocks || hasLongLines) {
+                          // For code-heavy comments, show first line + summary
+                          const firstLine = body.split('\n')[0];
+                          const lineCount = body.split('\n').length;
+                          bodyPreview = firstLine.length > 80 
+                            ? firstLine.substring(0, 80) + `... [${lineCount} lines total, likely contains code]`
+                            : firstLine + (lineCount > 1 ? ` [${lineCount} lines total, likely contains code]` : '');
+                        } else {
+                          // For regular text comments, show more content
+                          bodyPreview = body.length > 200 
+                            ? body.substring(0, 200) + "..." 
+                            : body;
+                        }
+                        
+                        const userName = user?.displayName || user?.name || "Unknown";
+                        const issueId = issue?.identifier || "Unknown";
+                        return `- ${userName} on ${issueId} (${createdAt}):\n  ${bodyPreview}\n  URL: ${url}`;
+                      });
+                      
+                      return `Found ${comments.length} comments:\n${commentSummaries.join("\n")}`;
                     })(),
                     metadata: baseResponse,
                   },
